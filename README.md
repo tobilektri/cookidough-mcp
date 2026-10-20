@@ -598,10 +598,24 @@ fits. Two ways to populate them:
    Explicit annotations replace inference, except for ingredient links:
    a step without its own `INGREDIENT` annotation still gets inferred
    ingredient links wherever they do not overlap an explicit span. To
-   suppress those, pass at least one explicit `INGREDIENT` annotation. The
-   remaining MODE types (`turbo`, `rice_cooker`, `warm_up`, `blend`)
-   currently have no text-pattern detector — the LLM must supply them
-   explicitly.
+   suppress those, pass at least one explicit `INGREDIENT` annotation.
+
+   Every MODE can also be written as its name followed by `/`-separated
+   values (German or English names):
+
+   | In the step text                         | Becomes                                   |
+   |------------------------------------------|-------------------------------------------|
+   | `Teig kneten/2 Min.` (`Teigmodus`, `Dough`) | `MODE/dough`                           |
+   | `Turbo/0,5 Sek.`, `Turbo/1 Sek./3x`      | `MODE/turbo` (pulses: TM7 editor only)    |
+   | `Pürieren/1 Min./Stufe 8` (`Blend`)      | `MODE/blend`                              |
+   | `Erwärmen/65°C/Stufe 1` (`Warm up`)      | `MODE/warm_up` (speed defaults to `soft`) |
+   | `[Reis kochen]` (`[Rice cooker]`)        | `MODE/rice_cooker`                        |
+   | `Dampfgaren/20 Min./Stufe 1/im Varoma`   | `MODE/steaming` (TM7 editor)              |
+   | `Anbraten/10 Min./160°C/Leicht`          | `MODE/browning` (TM7 editor)              |
+
+   A name without values is only a mode inside brackets, so prose such as
+   "den Reis kochen" stays text. Steaming also takes `Linkslauf` and
+   `im Gareinsatz` / `in beidem`; browning defaults to 10 min and `Leicht`.
 
 ### Editor limits
 
