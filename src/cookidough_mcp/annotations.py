@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from .annotation_models import (
@@ -49,6 +50,7 @@ from .annotation_models import (
 from .editor_rules import (
     VAROMA_TEMPERATURE,
     EditorVariant,
+    annotation_problem,
     editor_variant,
     varoma_is_temperature,
 )
@@ -444,22 +446,54 @@ class IngredientStrategy:
         return annotations
 
 
-class AnnotationInferrer:
-    """Aggregates annotation strategies and removes overlapping spans."""
+@dataclass(frozen=True)
+class RejectedAnnotation:
+    """A recognised setting the platform's editor could not produce, with the reason."""
 
-    def __init__(self, strategies: tuple[AnnotationStrategy, ...] | None = None) -> None:
-        self._strategies = strategies if strategies is not None else default_strategies()
+    span: str
+    reason: str
+
+
+class AnnotationInferrer:
+    """Aggregates annotation strategies, drops what the editor cannot produce and overlaps."""
+
+    def __init__(
+        self,
+        strategies: tuple[AnnotationStrategy, ...] | None = None,
+        variant: EditorVariant = EditorVariant.TM7,
+    ) -> None:
+        self._variant = variant
+        self._strategies = strategies if strategies is not None else default_strategies(variant)
 
     @classmethod
     def for_tools(cls, tools: Iterable[str]) -> AnnotationInferrer:
         """Inferrer for a recipe with these ``tools``, following its editor variant."""
-        return cls(default_strategies(editor_variant(tools)))
+        variant = editor_variant(tools)
+        return cls(default_strategies(variant), variant)
 
     def infer(self, text: str, ingredients: Sequence[str]) -> list[StepAnnotation]:
+        return self.infer_checked(text, ingredients)[0]
+
+    def infer_checked(
+        self, text: str, ingredients: Sequence[str]
+    ) -> tuple[list[StepAnnotation], list[RejectedAnnotation]]:
+        """Return the usable annotations and the recognised settings that were dropped."""
         candidates: list[StepAnnotation] = []
+        invalid: list[tuple[StepAnnotation, str]] = []
         for strategy in self._strategies:
-            candidates.extend(strategy.detect(text, ingredients))
-        return _drop_overlaps(candidates)
+            for annotation in strategy.detect(text, ingredients):
+                problem = annotation_problem(annotation, self._variant)
+                if problem is None:
+                    candidates.append(annotation)
+                else:
+                    invalid.append((annotation, problem))
+        accepted = _drop_overlaps(candidates)
+        rejected = [
+            RejectedAnnotation(text[a.offset : a.offset + a.length], problem)
+            for a, problem in invalid
+            if not any(_overlaps(a, other) for other in accepted)
+        ]
+        return accepted, rejected
 
 
 def default_strategies(
@@ -617,6 +651,12 @@ def _browning_power(raw: str) -> BrowningPower:
     return BrowningPower.INTENSE if raw.lower() in {"intensiv", "intense"} else BrowningPower.GENTLE
 
 
+def _overlaps(first: StepAnnotation, second: StepAnnotation) -> bool:
+    return (
+        first.offset < second.offset + second.length and second.offset < first.offset + first.length
+    )
+
+
 def _drop_overlaps(annotations: list[StepAnnotation]) -> list[StepAnnotation]:
     annotations.sort(key=lambda a: (a.offset, -a.length))
     result: list[StepAnnotation] = []
@@ -635,6 +675,7 @@ __all__ = [
     "BrowningStrategy",
     "DoughStrategy",
     "IngredientStrategy",
+    "RejectedAnnotation",
     "TtsStrategy",
     "default_strategies",
 ]

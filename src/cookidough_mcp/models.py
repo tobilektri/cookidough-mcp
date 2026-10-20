@@ -16,9 +16,9 @@ from pydantic import (
     model_validator,
 )
 
-from .annotation_models import ModeName, StepAnnotation, TtsAnnotation
+from .annotation_models import StepAnnotation
 from .constants import DEFAULT_DEVICE_MODELS, DeviceModel
-from .editor_rules import VAROMA_TEMPERATURE, editor_variant, mode_available, varoma_is_temperature
+from .editor_rules import annotation_problem, editor_variant
 
 
 class ShoppingItemSource(StrEnum):
@@ -346,26 +346,14 @@ class CustomRecipeDraft(_Model):
         return self
 
     @model_validator(mode="after")
-    def _annotations_fit_editor_variant(self) -> Self:
+    def _annotations_fit_editor(self) -> Self:
         variant = editor_variant(self.tools)
         for index, step in enumerate(self.steps):
             for annotation in step.annotations:
-                if isinstance(annotation, TtsAnnotation):
-                    temperature = annotation.data.temperature
-                    varoma = temperature is not None and temperature.value == VAROMA_TEMPERATURE
-                    if varoma and not varoma_is_temperature(variant):
-                        raise ValueError(
-                            f"Step {index}: Varoma is not a TTS temperature in the "
-                            "TM7 editor (tools contain 'TM7'); use a MODE/steaming "
-                            "annotation instead."
-                        )
-                    continue
-                mode = getattr(annotation, "name", None)
-                if isinstance(mode, ModeName) and not mode_available(mode, variant):
-                    raise ValueError(
-                        f"Step {index}: the {mode} MODE exists in the TM7 editor only; "
-                        "add 'TM7' to tools or use a TTS annotation instead."
-                    )
+                problem = annotation_problem(annotation, variant)
+                if problem is not None:
+                    span = step.text[annotation.offset : annotation.offset + annotation.length]
+                    raise ValueError(f"Step {index}, annotation on {span!r}: {problem}.")
         return self
 
     @property

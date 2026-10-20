@@ -407,7 +407,9 @@ MCP client can attach without spending a tool call) and **prompts**
 
 Both `upload_custom_recipe` and `import_web_recipe` score every draft against
 a small ruleset (time/speed annotations per cooking step, temperature/Varoma
-mode, accessory mentions, parallelization hints, ingredient/step linkage).
+mode, accessory mentions, parallelization hints, ingredient/step linkage,
+settings the platform's editor cannot produce — see
+[Editor limits](#editor-limits)).
 
 - Default threshold: `COOKIDOUGH_QUALITY_BAR=70`
 - `upload_custom_recipe` raises `QualityGateError` when below threshold —
@@ -480,7 +482,8 @@ with a `literal_error`. Reference those in the step text instead.
   `{ "time": <s>, "speed": "<n>"|"soft", "direction": "CW"|"CCW", "accessory": "Varoma"|"SimmeringBasket"|"VaromaAndSimmeringBasket" }`
 - **`dough`** — Kneading: `{ "time": <s> }`
 - **`turbo`** — Pulse mode (sub-second `time` supported):
-  `{ "time": <s|float>, "pulseCount": <n> }`
+  `{ "time": <s|float>, "pulseCount"?: <n> }` (`time` 0.5, 1 or 2; `pulseCount`
+  1-9, TM7 editor only)
 - **`rice_cooker`** — Empty `{}` (no parameters)
 - **`warm_up`** — Warm-up (time is optional):
   `{ "speed": "<n>"|"soft", "temperature": { "value": "<°C>", "unit": "C" }, "time"?: <s> }`
@@ -532,9 +535,10 @@ fits. Two ways to populate them:
      and `sens inverse`.
    - `<time>[/<°C>][/Linkslauf]/Sanftrührstufe` (or `Stufe sanft` /
      `speed soft`) becomes a `TTS` span with `speed="soft"`.
-   - `<time>[/<°C>]/Anbratstufe[/Linkslauf]` (TM7 browning-mode stir
-     pattern; the `Bratstufe` shorthand is also accepted) becomes a
-     `TTS` span with `speed="anbrat"`.
+   - `<time>[/<°C>]/Anbratstufe[/Linkslauf]` (and `Bratstufe`) is
+     recognised but not uploaded: the platform has no such speed and
+     rejects the whole recipe for it. The quality gate points to the
+     browning MODE instead.
    - Ingredient-list entries are reduced to their head noun: quantity,
      unit and parenthetical hints are stripped. Quantities recognised
      include integers (`350`), decimals (`1,5`, `1.5`), ASCII fractions
@@ -598,6 +602,29 @@ fits. Two ways to populate them:
    remaining MODE types (`turbo`, `rice_cooker`, `warm_up`, `blend`)
    currently have no text-pattern detector — the LLM must supply them
    explicitly.
+
+### Editor limits
+
+Every annotation, explicit or inferred, is checked against the choices the
+platform's recipe editor offers. The API only enforces some of them itself
+(an unknown temperature fails the whole upload with `400`, an out-of-range
+blend speed is stored silently), so the server checks them up front:
+
+| Setting   | Allowed                                                                                  |
+|-----------|------------------------------------------------------------------------------------------|
+| TTS       | speed `soft` or 0.5–10 in 0.5 steps; temperature 37, 40, 45 … 95, 98, 100, 105, 110, 115, 120 °C or `varoma` (TM6 editor); with a temperature at most speed 6; at most 99 min |
+| `dough`   | 1 s – 20 min                                                                             |
+| `turbo`   | 0.5, 1 or 2 s; `pulseCount` 1–9, TM7 editor only                                         |
+| `blend`   | speed 6, 6.5, 7, 7.5 or 8; 10 s – 5 min                                                  |
+| `warm_up` | 37–90 °C (editor steps); speed `soft`, 1 or 2                                            |
+| `steaming`| speed `soft`–5; up to 99 min (TM7 editor)                                                |
+| `browning`| 140–160 °C in 5 °C steps; up to 30 min (TM7 editor)                                      |
+
+Explicit annotations outside these limits fail validation with the reason.
+Inferred ones are left out of the upload, and the `editor_limits` quality
+rule reports each of them as a warning. TTS times that the editor would
+round (10 s steps up to 5 min, 30 s steps up to 20 min, whole minutes
+above) get an informational note.
 
 ## HTTP transport
 
