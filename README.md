@@ -16,8 +16,8 @@ recipes, manage shopping lists and meal plans, and upload custom recipes.
 > purely to identify the third-party service this software talks to. See
 > [Disclaimer & trademarks](#disclaimer--trademarks) for details.
 
-- 42 MCP tools across 7 domains (auth, recipes, collections, shopping,
-  calendar, discovery, interactions), plus 3 MCP resources and 2 prompts
+- 43 MCP tools across 7 domains (auth, recipes, collections, shopping,
+  calendar, discovery, interactions), plus 4 MCP resources and 2 prompts
 - Dual transport: stdio (default) and streamable HTTP
 - Recipe quality gate that blocks low-quality custom recipe uploads
 - Guided-cooking annotations (TTS time/speed spans, INGREDIENT spans) —
@@ -308,6 +308,7 @@ Lookup of any catalogue recipe plus the full custom-recipe workflow
 |-----------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `get_recipe_details`        | Full details of up to 20 catalogue recipes per call (`recipe_ids`, per-ID error entries), incl. cooking steps, categories, collections and nutrition; `include_interactions=true` adds own/community rating + personal note, `include_images=true` adds all recipe photos |
 | `get_custom_recipe_details` | Full details of one of your own custom recipes by ID                                                                                                                                                                                                                     |
+| `get_thermomix_modes`       | Appliance modes usable for the given `tools` (TM6/TM7 editor), read live from the platform's recipe editor, with how to write each in step text and its allowed values                                                                                                   |
 | `generate_recipe_structure` | Build a validated custom-recipe draft (steps accept plain strings or structured `RecipeStep`s — see [Guided-cooking annotations](#guided-cooking-annotations))                                                                                                           |
 | `validate_recipe_quality`   | Score a draft against the recipe quality bar without uploading                                                                                                                                                                                                 |
 | `upload_custom_recipe`      | Upload a draft (rolls back on failure, blocked by [Quality gate](#quality-gate)); pass `recipe_id` to overwrite an existing custom recipe (full replace)                                                                                                                 |
@@ -397,6 +398,7 @@ MCP client can attach without spending a tool call) and **prompts**
 | `cookidough://shopping-list`         | The current shopping list incl. its recipes (JSON) |
 | `cookidough://calendar/current-week` | The meal plan for the week containing today (JSON) |
 | `cookidough://custom-recipes`        | All custom recipes owned by the user (JSON)        |
+| `cookidough://modes`                 | Modes, speeds and temperatures the recipe editor offers (JSON) |
 
 | Prompt             | Workflow                                                                                                 |
 |--------------------|----------------------------------------------------------------------------------------------------------|

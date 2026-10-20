@@ -6,7 +6,7 @@ submodels, the discriminated union etc.) live in
 """
 
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -379,6 +379,53 @@ class QualityReport(_Model):
     threshold: int = Field(ge=0, le=100)
     meets_bar: bool
     issues: list[QualityIssue] = Field(default_factory=list)
+
+
+class ThermomixMode(_Model):
+    """One mode the platform's recipe editor offers."""
+
+    name: str = Field(min_length=1, description="Lowercase MODE name, e.g. 'dough'.")
+    title: str = Field(description="Localised name the platform shows, e.g. 'Teig kneten'.")
+    tm7_only: bool = Field(description="Offered by the TM7 editor only.")
+
+
+class ModeCatalog(_Model):
+    """What the platform's recipe editor offers, read from its settings dialog."""
+
+    modes: list[ThermomixMode] = Field(default_factory=list)
+    speeds: list[str] = Field(default_factory=list)
+    temperatures: list[str] = Field(default_factory=list)
+    turbo_times: list[str] = Field(default_factory=list)
+    pulse_counts: list[str] = Field(default_factory=list)
+    steaming_accessories: dict[str, str] = Field(default_factory=dict)
+    browning_powers: dict[str, str] = Field(default_factory=dict)
+    source: Literal["live", "builtin"] = Field(
+        description="'live' when read from the platform, 'builtin' for the shipped snapshot."
+    )
+
+
+class ModeSpelling(_Model):
+    """How to write a mode in plain step text, with the values the editor allows."""
+
+    name: str
+    title: str
+    example: str
+    limits: str
+
+
+class AvailableModes(_Model):
+    """Modes usable in a recipe with the given tools, plus what is not."""
+
+    editor_variant: Literal["TM6", "TM7"]
+    modes: list[ModeSpelling] = Field(default_factory=list)
+    unavailable: list[str] = Field(
+        default_factory=list, description="Offered by the platform, but not in this editor."
+    )
+    unsupported: list[str] = Field(
+        default_factory=list,
+        description="Offered by the platform, but not yet known to this server.",
+    )
+    source: Literal["live", "builtin"]
 
 
 class UploadResult(_Model):

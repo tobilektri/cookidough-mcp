@@ -27,8 +27,9 @@ matches ``Linkslauf``, ``sens inverse``, ``reverse``, ``counterclockwise``
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Protocol
 
 from .annotation_models import (
@@ -64,6 +65,7 @@ from .editor_rules import (
     editor_variant,
     varoma_is_temperature,
 )
+from .models import ModeCatalog
 
 _TTS_PATTERN = re.compile(
     # Require at least one time component up front so a bare "/Stufe N"
@@ -435,16 +437,21 @@ _TOKEN_PATTERNS: dict[str, re.Pattern[str]] = {
 _TOKEN_ALTERNATION = "|".join(
     re.sub(r"\(\?P<\w+>", "(?:", pattern.pattern) for pattern in _TOKEN_PATTERNS.values()
 )
-_TITLE_ALTERNATION = "|".join(
-    re.escape(title).replace(r"\ ", r"\s+")
-    for title in sorted(_TITLE_TO_MODE, key=len, reverse=True)
-)
-_TITLE_MODE_PATTERN = re.compile(
-    rf"(?P<open>\[\s*)?(?<![\w-])(?P<title>{_TITLE_ALTERNATION})(?![\w-])"
-    rf"(?P<params>(?:\s*/\s*(?:{_TOKEN_ALTERNATION}))*)"
-    r"(?(open)\s*\])",
-    re.IGNORECASE,
-)
+
+
+@lru_cache(maxsize=8)
+def _title_mode_pattern(titles: tuple[str, ...]) -> re.Pattern[str]:
+    alternation = "|".join(
+        re.escape(title).replace(r"\ ", r"\s+") for title in sorted(titles, key=len, reverse=True)
+    )
+    return re.compile(
+        rf"(?P<open>\[\s*)?(?<![\w-])(?P<title>{alternation})(?![\w-])"
+        rf"(?P<params>(?:\s*/\s*(?:{_TOKEN_ALTERNATION}))*)"
+        r"(?(open)\s*\])",
+        re.IGNORECASE,
+    )
+
+
 _ACCESSORIES = {
     "varoma": SteamingAccessory.VAROMA,
     "gareinsatz": SteamingAccessory.SIMMERING_BASKET,
@@ -465,16 +472,24 @@ class TitleModeStrategy:
     bracketed (``[Reis kochen]``), so prose like "den Reis kochen" stays text.
     Missing required values (a blend without speed) yield no annotation;
     values outside the editor's limits are rejected by the inferrer.
+    ``extra_titles`` adds the platform's own (localised) mode names.
     """
+
+    def __init__(self, extra_titles: Mapping[str, ModeName] | None = None) -> None:
+        self._titles = {
+            **_TITLE_TO_MODE,
+            **{title.casefold(): mode for title, mode in (extra_titles or {}).items()},
+        }
+        self._pattern = _title_mode_pattern(tuple(sorted(self._titles)))
 
     def detect(self, text: str, ingredients: Sequence[str]) -> list[StepAnnotation]:
         del ingredients
         annotations: list[StepAnnotation] = []
-        for match in _TITLE_MODE_PATTERN.finditer(text):
+        for match in self._pattern.finditer(text):
             params = match.group("params")
             if not params and not match.group("open"):
                 continue
-            mode = _TITLE_TO_MODE[re.sub(r"\s+", " ", match.group("title")).casefold()]
+            mode = self._titles[re.sub(r"\s+", " ", match.group("title")).casefold()]
             values = _parse_mode_values(params)
             if values is None:
                 continue
@@ -664,15 +679,27 @@ class AnnotationInferrer:
         self,
         strategies: tuple[AnnotationStrategy, ...] | None = None,
         variant: EditorVariant = EditorVariant.TM7,
+        offered: frozenset[ModeName] | None = None,
     ) -> None:
         self._variant = variant
+        self._offered = offered
         self._strategies = strategies if strategies is not None else default_strategies(variant)
 
     @classmethod
-    def for_tools(cls, tools: Iterable[str]) -> AnnotationInferrer:
-        """Inferrer for a recipe with these ``tools``, following its editor variant."""
+    def for_tools(
+        cls, tools: Iterable[str], catalog: ModeCatalog | None = None
+    ) -> AnnotationInferrer:
+        """Inferrer for a recipe with these ``tools``, following its editor variant.
+
+        With a ``catalog`` the platform's own mode names are recognised too, and
+        modes the platform no longer offers are rejected.
+        """
         variant = editor_variant(tools)
-        return cls(default_strategies(variant), variant)
+        if catalog is None:
+            return cls(default_strategies(variant), variant)
+        known = {mode.value for mode in ModeName}
+        titles = {m.title: ModeName(m.name) for m in catalog.modes if m.name in known}
+        return cls(default_strategies(variant, titles), variant, offered=frozenset(titles.values()))
 
     def infer(self, text: str, ingredients: Sequence[str]) -> list[StepAnnotation]:
         return self.infer_checked(text, ingredients)[0]
@@ -685,7 +712,7 @@ class AnnotationInferrer:
         invalid: list[tuple[StepAnnotation, str]] = []
         for strategy in self._strategies:
             for annotation in strategy.detect(text, ingredients):
-                problem = annotation_problem(annotation, self._variant)
+                problem = self._problem(annotation)
                 if problem is None:
                     candidates.append(annotation)
                 else:
@@ -707,9 +734,16 @@ class AnnotationInferrer:
         ]
         return accepted, rejected
 
+    def _problem(self, annotation: StepAnnotation) -> str | None:
+        mode = getattr(annotation, "name", None)
+        if self._offered is not None and isinstance(mode, ModeName) and mode not in self._offered:
+            return f"the platform no longer offers the {mode} mode"
+        return annotation_problem(annotation, self._variant)
+
 
 def default_strategies(
     variant: EditorVariant = EditorVariant.TM7,
+    extra_titles: Mapping[str, ModeName] | None = None,
 ) -> tuple[AnnotationStrategy, ...]:
     """Return the default strategy set for an editor variant.
 
@@ -723,7 +757,12 @@ def default_strategies(
         if variant is EditorVariant.TM7
         else (DoughStrategy(),)
     )
-    return (TitleModeStrategy(), *mode_strategies, IngredientStrategy(), TtsStrategy(variant))
+    return (
+        TitleModeStrategy(extra_titles),
+        *mode_strategies,
+        IngredientStrategy(),
+        TtsStrategy(variant),
+    )
 
 
 def _combined_time_seconds(minutes: str | None, seconds: str | None) -> int:
